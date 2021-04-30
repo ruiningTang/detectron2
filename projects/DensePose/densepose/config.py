@@ -1,5 +1,6 @@
 # -*- coding = utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates.
+# pyre-ignore-all-errors
 
 from detectron2.config import CfgNode as CN
 
@@ -13,6 +14,33 @@ def add_dataset_category_config(cfg: CN):
     _C = cfg
     _C.DATASETS.CATEGORY_MAPS = CN(new_allowed=True)
     _C.DATASETS.WHITELISTED_CATEGORIES = CN(new_allowed=True)
+    # class to mesh mapping
+    _C.DATASETS.CLASS_TO_MESH_NAME_MAPPING = CN(new_allowed=True)
+
+
+def add_evaluation_config(cfg: CN):
+    _C = cfg
+    _C.DENSEPOSE_EVALUATION = CN()
+    # evaluator type, possible values:
+    #  - "iou": evaluator for models that produce iou data
+    #  - "cse": evaluator for models that produce cse data
+    _C.DENSEPOSE_EVALUATION.TYPE = "iou"
+    # storage for DensePose results, possible values:
+    #  - "none": no explicit storage, all the results are stored in the
+    #            dictionary with predictions, memory intensive;
+    #            historically the default storage type
+    #  - "ram": RAM storage, uses per-process RAM storage, which is
+    #           reduced to a single process storage on later stages,
+    #           less memory intensive
+    #  - "file": file storage, uses per-process file-based storage,
+    #            the least memory intensive, but may create bottlenecks
+    #            on file system accesses
+    _C.DENSEPOSE_EVALUATION.STORAGE = "none"
+    # minimum threshold for IOU values: the lower its values is,
+    # the more matches are produced (and the higher the AP score)
+    _C.DENSEPOSE_EVALUATION.MIN_IOU_THRESHOLD = 0.5
+    # Non-distributed inference is slower (at inference time) but can avoid RAM OOM
+    _C.DENSEPOSE_EVALUATION.DISTRIBUTED_INFERENCE = True
 
 
 def add_bootstrap_config(cfg: CN):
@@ -34,6 +62,9 @@ def get_bootstrap_dataset_config() -> CN:
     _C.IMAGE_LOADER.TYPE = ""
     _C.IMAGE_LOADER.BATCH_SIZE = 4
     _C.IMAGE_LOADER.NUM_WORKERS = 4
+    _C.IMAGE_LOADER.CATEGORIES = []
+    _C.IMAGE_LOADER.MAX_COUNT_PER_CATEGORY = 1_000_000
+    _C.IMAGE_LOADER.CATEGORY_TO_CLASS_MAPPING = CN(new_allowed=True)
     # inference
     _C.INFERENCE = CN()
     # batch size for model inputs
@@ -43,6 +74,7 @@ def get_bootstrap_dataset_config() -> CN:
     # sampled data
     _C.DATA_SAMPLER = CN(new_allowed=True)
     _C.DATA_SAMPLER.TYPE = ""
+    _C.DATA_SAMPLER.USE_GROUND_TRUTH_CATEGORIES = False
     # filter
     _C.FILTER = CN(new_allowed=True)
     _C.FILTER.TYPE = ""
@@ -139,6 +171,8 @@ def add_densepose_head_config(cfg: CN):
     #   "DensePoseChartPredictor": predicts segmentation and UV coordinates for predefined charts
     #   "DensePoseChartWithConfidencePredictor": predicts segmentation, UV coordinates
     #       and associated confidences for predefined charts (default)
+    #   "DensePoseEmbeddingWithConfidencePredictor": predicts segmentation, embeddings
+    #       and associated confidences for CSE
     _C.MODEL.ROI_DENSEPOSE_HEAD.PREDICTOR_NAME = "DensePoseChartWithConfidencePredictor"
     # Loss class name, must be registered in DENSEPOSE_LOSS_REGISTRY
     # Some registered losses:
@@ -209,3 +243,4 @@ def add_densepose_config(cfg: CN):
     add_hrnet_config(cfg)
     add_bootstrap_config(cfg)
     add_dataset_category_config(cfg)
+    add_evaluation_config(cfg)

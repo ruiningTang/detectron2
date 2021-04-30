@@ -44,8 +44,8 @@ class PanopticDeepLab(nn.Module):
         self.backbone = build_backbone(cfg)
         self.sem_seg_head = build_sem_seg_head(cfg, self.backbone.output_shape())
         self.ins_embed_head = build_ins_embed_branch(cfg, self.backbone.output_shape())
-        self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
-        self.register_buffer("pixel_std", torch.Tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1))
+        self.register_buffer("pixel_mean", torch.tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1), False)
+        self.register_buffer("pixel_std", torch.tensor(cfg.MODEL.PIXEL_STD).view(-1, 1, 1), False)
         self.meta = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
         self.stuff_area = cfg.MODEL.PANOPTIC_DEEPLAB.STUFF_AREA
         self.threshold = cfg.MODEL.PANOPTIC_DEEPLAB.CENTER_THRESHOLD
@@ -57,6 +57,8 @@ class PanopticDeepLab(nn.Module):
             cfg.MODEL.SEM_SEG_HEAD.USE_DEPTHWISE_SEPARABLE_CONV
             == cfg.MODEL.PANOPTIC_DEEPLAB.USE_DEPTHWISE_SEPARABLE_CONV
         )
+        self.size_divisibility = cfg.MODEL.PANOPTIC_DEEPLAB.SIZE_DIVISIBILITY
+        self.benchmark_network_speed = cfg.MODEL.PANOPTIC_DEEPLAB.BENCHMARK_NETWORK_SPEED
 
     @property
     def device(self):
@@ -86,7 +88,12 @@ class PanopticDeepLab(nn.Module):
         """
         images = [x["image"].to(self.device) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
-        size_divisibility = self.backbone.size_divisibility
+        # To avoid error in ASPP layer when input has different size.
+        size_divisibility = (
+            self.size_divisibility
+            if self.size_divisibility > 0
+            else self.backbone.size_divisibility
+        )
         images = ImageList.from_tensors(images, size_divisibility)
 
         features = self.backbone(images.tensor)
@@ -137,6 +144,9 @@ class PanopticDeepLab(nn.Module):
 
         if self.training:
             return losses
+
+        if self.benchmark_network_speed:
+            return []
 
         processed_results = []
         for sem_seg_result, center_result, offset_result, input_per_image, image_size in zip(
@@ -236,8 +246,8 @@ class PanopticDeepLabSemSegHead(DeepLabV3PlusHead):
         Args:
             input_shape (ShapeSpec): shape of the input feature
             decoder_channels (list[int]): a list of output channels of each
-                decoder stage. It should have the same length as "in_features"
-                (each element in "in_features" corresponds to one decoder stage).
+                decoder stage. It should have the same length as "input_shape"
+                (each element in "input_shape" corresponds to one decoder stage).
             norm (str or callable): normalization for all conv layers.
             head_channels (int): the output channels of extra convolutions
                 between decoder and predictor.
@@ -375,8 +385,8 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
         Args:
             input_shape (ShapeSpec): shape of the input feature
             decoder_channels (list[int]): a list of output channels of each
-                decoder stage. It should have the same length as "in_features"
-                (each element in "in_features" corresponds to one decoder stage).
+                decoder stage. It should have the same length as "input_shape"
+                (each element in "input_shape" corresponds to one decoder stage).
             norm (str or callable): normalization for all conv layers.
             head_channels (int): the output channels of extra convolutions
                 between decoder and predictor.
@@ -473,8 +483,9 @@ class PanopticDeepLabInsEmbedHead(DeepLabV3PlusHead):
             len(cfg.MODEL.INS_EMBED_HEAD.IN_FEATURES) - 1
         ) + [cfg.MODEL.INS_EMBED_HEAD.ASPP_CHANNELS]
         ret = dict(
-            input_shape=input_shape,
-            in_features=cfg.MODEL.INS_EMBED_HEAD.IN_FEATURES,
+            input_shape={
+                k: v for k, v in input_shape.items() if k in cfg.MODEL.INS_EMBED_HEAD.IN_FEATURES
+            },
             project_channels=cfg.MODEL.INS_EMBED_HEAD.PROJECT_CHANNELS,
             aspp_dilations=cfg.MODEL.INS_EMBED_HEAD.ASPP_DILATIONS,
             aspp_dropout=cfg.MODEL.INS_EMBED_HEAD.ASPP_DROPOUT,

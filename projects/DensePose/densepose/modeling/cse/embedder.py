@@ -1,5 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 
+import logging
+import numpy as np
 import pickle
 from enum import Enum
 from typing import Optional
@@ -56,6 +58,7 @@ def create_embedder(embedder_spec: CfgNode, embedder_dim: int) -> nn.Module:
         raise ValueError(f"Unexpected embedder type {embedder_type}")
 
     if not embedder_spec.IS_TRAINABLE:
+        # pyre-fixme[29]: `Union[nn.Module, torch.Tensor]` is not a function.
         embedder.requires_grad_(False)
 
     return embedder
@@ -80,7 +83,10 @@ class Embedder(nn.Module):
         super(Embedder, self).__init__()
         self.mesh_names = set()
         embedder_dim = cfg.MODEL.ROI_DENSEPOSE_HEAD.CSE.EMBED_SIZE
+        logger = logging.getLogger(__name__)
         for mesh_name, embedder_spec in cfg.MODEL.ROI_DENSEPOSE_HEAD.CSE.EMBEDDERS.items():
+            logger.info(f"Adding embedder embedder_{mesh_name} with spec {embedder_spec}")
+            # pyre-fixme[29]: `Union[nn.Module, torch.Tensor]` is not a function.
             self.add_module(f"embedder_{mesh_name}", create_embedder(embedder_spec, embedder_dim))
             self.mesh_names.add(mesh_name)
         if cfg.MODEL.WEIGHTS != "":
@@ -92,7 +98,7 @@ class Embedder(nn.Module):
         state_dict = None
         if fpath.endswith(".pkl"):
             with PathManager.open(fpath, "rb") as hFile:
-                state_dict = pickle.load(hFile, encoding="latin1")
+                state_dict = pickle.load(hFile, encoding="latin1")  # pyre-ignore[6]
         else:
             with PathManager.open(fpath, "rb") as hFile:
                 state_dict = torch.load(hFile, map_location=torch.device("cpu"))
@@ -100,9 +106,12 @@ class Embedder(nn.Module):
             state_dict_local = {}
             for key in state_dict["model"]:
                 if key.startswith(prefix):
-                    state_dict_local[key[len(prefix) :]] = state_dict["model"][key]
+                    v_key = state_dict["model"][key]
+                    if isinstance(v_key, np.ndarray):
+                        v_key = torch.from_numpy(v_key)
+                    state_dict_local[key[len(prefix) :]] = v_key
             # non-strict loading to finetune on different meshes
-            self.load_state_dict(state_dict_local, strict=False)
+            self.load_state_dict(state_dict_local, strict=False)  # pyre-ignore[28]
 
     def forward(self, mesh_name: str) -> torch.Tensor:
         """
@@ -116,3 +125,6 @@ class Embedder(nn.Module):
             Vertex embeddings, a tensor of shape [N, D]
         """
         return getattr(self, f"embedder_{mesh_name}")()
+
+    def has_embeddings(self, mesh_name: str) -> bool:
+        return hasattr(self, f"embedder_{mesh_name}")
